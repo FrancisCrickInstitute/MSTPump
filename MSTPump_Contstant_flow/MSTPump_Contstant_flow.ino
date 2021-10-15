@@ -8,20 +8,7 @@
 Encoder knob(10, 11);
 const int encoder_SW = 12;
 Bounce pushbutton = Bounce(encoder_SW, 10);  // 10 ms debounce
-
-byte previousState = HIGH;         // what state was the button last time
-unsigned int count = 0;            // how many times has it changed to low
-unsigned long countAt = 0;         // when count changed
-unsigned int countPrinted = 0;     // last count printed
-
-bool state = LOW;
-
-int knob_pos = 0;
-int32_t knob_old =0;
-int touch_a=0;
-int touch_b=0;
-float touch_inc=0;
-int touch_cor=0;
+bool state = 0;
 
 Stepper pump(7, 6);       // STEP pin: 7, DIR pin: 6  // The stepper class encapsulates the physical properties of a stepper motor like pin numbers of the STEP and DIR signals, speed and acceleration of the motor.
 //StepControl step_controller;    // The StepControl class is used to synchronously move up to 10 motors to their target positions.
@@ -32,7 +19,7 @@ int speed_ = 0;
 //const int lead_size = 8; // lead size (8mm)
 const int lead_size = 1; // lead size (1mm)
 const float steps_rev = 3200; // Stepper resolution at 1/16 steps per revolution
-const float syringe_area = 561;// Syringe cross section area(561 mm^2).
+const float syringe_area = 560;// Syringe cross section area(560 mm^2 Hardvare apparatus).(549.88 Datasheet)
 float linear_resolution = (lead_size/steps_rev)*syringe_area; //uL/step or mm^3/step
 
 float Volume;
@@ -57,6 +44,12 @@ const int Enable = 2;
 const int LSW1 = 15;
 const int LSW2 = 14;
 
+Bounce limitswitch_back = Bounce(LSW2,10);
+Bounce limitswitch_front = Bounce(LSW1,10);
+
+//Direction
+bool dir = true;
+
 void setup()
 {
   pinMode(MS1, OUTPUT);    // set the MS1, MS2, MS3 and Enable as an outputs
@@ -70,7 +63,7 @@ void setup()
   digitalWrite(Enable, HIGH); // set the enable to HIGH
   
   // Set the motor max acceleration
-  pump.setAcceleration(5000)   // stp/s^2
+  pump.setAcceleration(500)   // stp/s^2
       .setInverseRotation(true);
   
   pinMode(LSW1, INPUT_PULLUP);
@@ -83,9 +76,6 @@ void setup()
   delay(1000); 
   display.clearDisplay();
 
-  touch_a = touchRead(16);
-  touch_b = touchRead(17);
-  touch_cor =(touch_a-touch_b)*1000/(touch_a+touch_b);
 }
 
 void loop() 
@@ -93,11 +83,9 @@ void loop()
   
   read_pushbutton();
   
-  read_flow();
-  
   OLED_display();
   
-  flow_rate = speed_*0.01;
+  flow_rate =(knob.read()/2)*linear_resolution*60;
       
   steps_s = get_speed(flow_rate);
 
@@ -107,24 +95,22 @@ void loop()
   
   while (digitalRead(LSW2)==HIGH && digitalRead(LSW1)==HIGH && state == HIGH)
   {
+      digitalWrite(Enable, LOW);
 
-    digitalWrite(Enable, LOW);
-    
-    read_pushbutton();
-    
-    read_flow();
-    
-    flow_rate = speed_*0.01;
+      read_pushbutton();    
       
-    steps_s = get_speed(flow_rate);
-    
-    Volume = get_volume(pump.getPosition());
+      flow_rate =(knob.read()/2)*linear_resolution*60;
+ 
+      steps_s = get_speed(flow_rate);
+      Volume = get_volume(pump.getPosition());
+  
+      pump.setMaxSpeed(steps_s)
+      .setInverseRotation(dir);
+      rotate_controller.rotateAsync(pump);
+  
+      OLED_display();
 
-    pump.setMaxSpeed(steps_s);
-    rotate_controller.overrideSpeed(steps_s);
-    rotate_controller.rotateAsync(pump);
 
-    OLED_display();
   }
   
 
@@ -160,55 +146,31 @@ void OLED_display()
     display.setTextSize(1);
     display.println();
     display.println();
-    display.print(F("Flow rate:"));
+    display.print(F("Flow rate selected:"));
     display.println();
-    display.setTextSize(2);
-    display.print(flow_rate);
+    display.setTextSize(1);
+    display.print((knob.read()/2)*linear_resolution*60);
     display.setTextSize(1);
     display.println  (F(" uL/min"));
+    display.print(F("Flow rate dispensed:"));
     display.println();
+    display.print(rotate_controller.getCurrentSpeed()*linear_resolution*60); 
+    display.println  (F(" uL/min"));
+    display.setTextSize(1);
     display.print(F("Volume:"));
-    display.println();
-    display.setTextSize(2);
     display.print(int(Volume));
     display.setTextSize(1);
     display.println(F(" uL"));
     display.display(); 
 }
 
-void read_flow()
-{    
-    touch_a = touchRead(16);
-    touch_b = touchRead(17);
-    touch_inc =(touch_a-touch_b)*1000/(touch_a+touch_b)-touch_cor;
-    if (abs(touch_inc) < 10 ){touch_inc=0;}
-     
-    if (knob.read()!=knob_old){speed_ = speed_+knob.read()-knob_old;}
-    knob_old=knob.read();
-    speed_=speed_+touch_inc;
-}
-
 void read_pushbutton()
 {
-  if (pushbutton.update()) 
-  {
-    if (pushbutton.fallingEdge()) 
+    if (pushbutton.update()) 
     {
-      count = count + 1;
-      if ( (count % 2) == 0) { state = HIGH; }
-      else {state = LOW;}
-      countAt = millis();
-    }
-  } 
-  else 
-  {
-    if (count != countPrinted) 
-    {
-      unsigned long nowMillis = millis();
-      if (nowMillis - countAt > 100) 
+      if (pushbutton.fallingEdge()) 
       {
-        countPrinted = count;
+        state = !state;
       }
-    }
-  }
+    } 
 }
